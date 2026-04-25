@@ -680,9 +680,9 @@ function Game({ vehicleFolder, setVehicleFolder, virtualKeys }) {
   return (
     <Physics gravity={[0, -9.81, 0]} defaultContactMaterial={{ friction: 0, restitution: 0.1 }}>
       {vehicleFolder === 'helicopter' ? (
-        <Helicopter key="helicopter" lastPos={lastPos} lastRot={lastRot} />
+        <Helicopter key="helicopter" lastPos={lastPos} lastRot={lastRot} virtualKeys={virtualKeys} />
       ) : vehicleFolder === 'ship' ? (
-        <Ship key="ship" lastPos={lastPos} lastRot={lastRot} />
+        <Ship key="ship" lastPos={lastPos} lastRot={lastRot} virtualKeys={virtualKeys} />
       ) : (
         <Car 
           key={vehicleFolder} 
