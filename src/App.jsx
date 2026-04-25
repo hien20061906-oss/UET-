@@ -5,20 +5,12 @@ import * as THREE from 'three';
 import { useGLTF, Environment, ContactShadows, Preload, Sky } from '@react-three/drei';
 
 // ─── CONTROLS ────────────────────────────────────────────────────────────────
-function usePlayerControls(virtualKeys = {}) {
+function usePlayerControls() {
   const keys = useRef({ 
     forward: false, backward: false, left: false, right: false, 
     brake: false, reset: false, boost: false, change: false,
     up: false, down: false, yawLeft: false, yawRight: false 
   });
-
-  // Đồng bộ phím ảo từ Mobile
-  useEffect(() => {
-    Object.keys(virtualKeys).forEach(k => {
-      keys.current[k] = virtualKeys[k];
-    });
-  }, [virtualKeys]);
-
   useEffect(() => {
     const down = (e) => {
       if (e.code === 'KeyW' || e.code === 'ArrowUp')    keys.current.forward  = true;
@@ -91,8 +83,8 @@ const Wheel = React.forwardRef(({ radius = 0.25, width = 0.24, leftSide, folder 
   );
 });
 
-const Car = ({ folder = 'default', lastPos, lastRot, virtualKeys }) => {
-  const controls = usePlayerControls(virtualKeys);
+const Car = ({ folder, lastPos, lastRot }) => {
+  const controls = usePlayerControls();
   const lastChange = useRef(false);
   const { camera } = useThree();
 
@@ -437,8 +429,8 @@ const Propeller = (props) => (
 );
 
 // ─── HELICOPTER ────────────────────────────────────────────────────────
-const Helicopter = ({ lastPos, lastRot, virtualKeys }) => {
-  const controls = usePlayerControls(virtualKeys);
+const Helicopter = ({ lastPos, lastRot }) => {
+  const controls = usePlayerControls();
   const { camera } = useThree();
   const firstFrame = useRef(true);
   const smoothRot = useRef(0);
@@ -547,9 +539,9 @@ const Helicopter = ({ lastPos, lastRot, virtualKeys }) => {
 };
 
 // --- NEW SHIP COMPONENT (FROM SCRATCH) ---
-const Ship = ({ lastPos, lastRot, virtualKeys }) => {
+const Ship = ({ lastPos, lastRot }) => {
   const { scene } = useGLTF('/models/car/ship/chassis.glb');
-  const keys = usePlayerControls(virtualKeys);
+  const keys = usePlayerControls();
   const { camera, gl } = useThree();
   const smoothRot = useRef(0);
   const camAngle = useRef({ x: 0, y: Math.PI / 8, dist: 18 });
@@ -670,8 +662,8 @@ const MapObject = ({ filename, position, args = [2, 2, 2], scale = 1, rotation =
 };
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
-function Game({ vehicleFolder, setVehicleFolder, virtualKeys }) {
-  const controls = usePlayerControls(virtualKeys);
+function Game({ vehicleFolder, setVehicleFolder }) {
+  const controls = usePlayerControls();
   const lastChange = useRef(false);
   
   const lastPos = useRef([0, 0.5, 0]);
@@ -680,16 +672,15 @@ function Game({ vehicleFolder, setVehicleFolder, virtualKeys }) {
   return (
     <Physics gravity={[0, -9.81, 0]} defaultContactMaterial={{ friction: 0, restitution: 0.1 }}>
       {vehicleFolder === 'helicopter' ? (
-        <Helicopter key="helicopter" lastPos={lastPos} lastRot={lastRot} virtualKeys={virtualKeys} />
+        <Helicopter key="helicopter" lastPos={lastPos} lastRot={lastRot} />
       ) : vehicleFolder === 'ship' ? (
-        <Ship key="ship" lastPos={lastPos} lastRot={lastRot} virtualKeys={virtualKeys} />
+        <Ship key="ship" lastPos={lastPos} lastRot={lastRot} />
       ) : (
         <Car 
           key={vehicleFolder} 
           folder={vehicleFolder} 
           lastPos={lastPos} 
           lastRot={lastRot}
-          virtualKeys={virtualKeys}
         />
       )}
       <Ground />
@@ -703,16 +694,6 @@ export default function App() {
   const [showMenu, setShowMenu] = useState(false);
   const [showShop, setShowShop] = useState(false);
   
-  // Điều khiển Mobile
-  const [virtualKeys, setVirtualKeys] = useState({
-    forward: false, backward: false, left: false, right: false,
-    brake: false, up: false, down: false, yawLeft: false, yawRight: false
-  });
-
-  const updateVirtualKey = (key, value) => {
-    setVirtualKeys(prev => ({ ...prev, [key]: value }));
-  };
-
   // Hệ thống vàng và xe đã mở khóa
   const [gold, setGold] = useState(5000); // Tặng 5000 vàng khởi đầu
   const [unlockedVehicles, setUnlockedVehicles] = useState(['default']);
@@ -1120,62 +1101,63 @@ export default function App() {
         <div className="heli-controls">
           <h3>🚁 ĐIỀU KHIỂN</h3>
           <p><b>W / S:</b> Tiến / Lùi</p>
-          <p><b>Q / E:</b> Xoay thân</p>
-          <p><b>Space:</b> Bay lên</p>
+          <p><b>Q / E:</b> Xoay thân (Yaw)</p>
+          <p><b>Space:</b> Bay lên & Phanh</p>
           <p><b>Shift:</b> Bay xuống</p>
         </div>
       )}
 
-      <Canvas shadows camera={{ position: [0, 5, 10], fov: 50 }}>
+      <style>{`
+        .heli-controls {
+          position: absolute;
+          bottom: 20px;
+          left: 20px;
+          background: rgba(0, 0, 0, 0.7);
+          color: white;
+          padding: 15px;
+          border-radius: 12px;
+          font-family: sans-serif;
+          pointer-events: none;
+          z-index: 100;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(5px);
+        }
+        .heli-controls h3 { margin: 0 0 10px 0; font-size: 14px; color: #FF7A2F; }
+        .heli-controls p { margin: 5px 0; font-size: 12px; }
+        .heli-controls b { color: #5bc0de; }
+      `}</style>
+
+      <Canvas 
+        shadows 
+        camera={{ position: [0, 5, 10], fov: 50 }} 
+        style={{ background: '#87ceeb' }}
+        gl={{ antialias: true, stencil: false, depth: true, powerPreference: "high-performance" }}
+      >
         <color attach="background" args={['#87ceeb']} />
         <fog attach="fog" args={['#87ceeb', 10, 150]} />
+        
         <Sky sunPosition={[100, 20, 100]} />
-        <Environment preset="park" />
-        <ContactShadows resolution={1024} scale={20} blur={2} opacity={0.5} far={10} />
-        <Game vehicleFolder={vehicleFolder} />
+        
+        {/* Cinematic Lighting - Bright Theme */}
+        <ambientLight intensity={0.6} />
+        <spotLight position={[20, 50, 20]} angle={0.2} penumbra={1} intensity={1.5} castShadow />
+        <directionalLight position={[-10, 20, 5]} intensity={1} color="#ffffff" />
+        
+        {/* Environment Map tạo độ bóng kim loại chuyên nghiệp */}
+        <React.Suspense fallback={null}>
+          <Environment preset="park" />
+          <ContactShadows 
+            position={[0, 0, 0]} 
+            opacity={0.4} 
+            scale={40} 
+            blur={2} 
+            far={4.5} 
+          />
+        </React.Suspense>
+
+        <Game vehicleFolder={vehicleFolder} setVehicleFolder={setVehicleFolder} />
         <Preload all />
       </Canvas>
-
-      {/* Mobile Controls */}
-      <div className="mobile-controls">
-        <div className="d-pad">
-          <div className="ctrl-btn up" onPointerDown={() => updateVirtualKey('forward', true)} onPointerUp={() => updateVirtualKey('forward', false)} onPointerLeave={() => updateVirtualKey('forward', false)}>▲</div>
-          <div className="ctrl-row">
-            <div className="ctrl-btn left" onPointerDown={() => updateVirtualKey('left', true)} onPointerUp={() => updateVirtualKey('left', false)} onPointerLeave={() => updateVirtualKey('left', false)}>◀</div>
-            <div className="ctrl-btn down" onPointerDown={() => updateVirtualKey('backward', true)} onPointerUp={() => updateVirtualKey('backward', false)} onPointerLeave={() => updateVirtualKey('backward', false)}>▼</div>
-            <div className="ctrl-btn right" onPointerDown={() => updateVirtualKey('right', true)} onPointerUp={() => updateVirtualKey('right', false)} onPointerLeave={() => updateVirtualKey('right', false)}>▶</div>
-          </div>
-        </div>
-        <div className="action-btns">
-          {vehicleFolder === 'helicopter' && (
-            <>
-              <div className="ctrl-btn action-btn lift" onPointerDown={() => updateVirtualKey('up', true)} onPointerUp={() => updateVirtualKey('up', false)} onPointerLeave={() => updateVirtualKey('up', false)}>🚀 LÊN</div>
-              <div className="ctrl-btn action-btn land" onPointerDown={() => updateVirtualKey('down', true)} onPointerUp={() => updateVirtualKey('down', false)} onPointerLeave={() => updateVirtualKey('down', false)}>⚓ XUỐNG</div>
-            </>
-          )}
-          <div className="ctrl-btn action-btn brake-btn" onPointerDown={() => updateVirtualKey('brake', true)} onPointerUp={() => updateVirtualKey('brake', false)} onPointerLeave={() => updateVirtualKey('brake', false)}>🛑</div>
-        </div>
-      </div>
-
-      <style>{`
-        .heli-controls { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.7); color: white; padding: 15px; border-radius: 12px; pointer-events: none; }
-        .mobile-controls { position: absolute; bottom: 40px; left: 0; width: 100%; padding: 0 20px; display: flex; justify-content: space-between; align-items: flex-end; z-index: 500; pointer-events: none; }
-        .ctrl-btn { width: 65px; height: 65px; background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px); border-radius: 50%; color: white; display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none; }
-        .ctrl-btn:active { background: rgba(255, 122, 47, 0.6); }
-        .d-pad { display: flex; flex-direction: column; align-items: center; gap: 5px; }
-        .ctrl-row { display: flex; gap: 5px; }
-
-        .action-btns { display: flex; flex-direction: column; gap: 10px; }
-        .action-btn { width: 120px; height: 55px; font-size: 13px; font-weight: bold; border-radius: 15px; }
-        .brake-btn { background: rgba(255, 0, 0, 0.3); }
-        .lift { background: rgba(0, 255, 0, 0.2); }
-        .land { background: rgba(0, 0, 255, 0.2); }
-
-        /* Chỉ ẩn trên màn hình cực lớn, còn lại cho hiện hết để test */
-        @media (min-width: 1400px) {
-          .mobile-controls { display: none; }
-        }
-      `}</style>
     </div>
   );
 }
