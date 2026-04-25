@@ -1183,18 +1183,22 @@ export default function App() {
       <div className="mobile-controls">
         <div className="d-pad">
           <div className="ctrl-btn up" 
-            onTouchStart={() => updateVirtualKey('forward', true)} 
-            onTouchEnd={() => updateVirtualKey('forward', false)}>▲</div>
+            onPointerDown={() => updateVirtualKey('forward', true)} 
+            onPointerUp={() => updateVirtualKey('forward', false)}
+            onPointerLeave={() => updateVirtualKey('forward', false)}>▲</div>
           <div className="ctrl-row">
             <div className="ctrl-btn left" 
-              onTouchStart={() => updateVirtualKey('left', true)} 
-              onTouchEnd={() => updateVirtualKey('left', false)}>◀</div>
+              onPointerDown={() => updateVirtualKey('left', true)} 
+              onPointerUp={() => updateVirtualKey('left', false)}
+              onPointerLeave={() => updateVirtualKey('left', false)}>◀</div>
             <div className="ctrl-btn down" 
-              onTouchStart={() => updateVirtualKey('backward', true)} 
-              onTouchEnd={() => updateVirtualKey('backward', false)}>▼</div>
+              onPointerDown={() => updateVirtualKey('backward', true)} 
+              onPointerUp={() => updateVirtualKey('backward', false)}
+              onPointerLeave={() => updateVirtualKey('backward', false)}>▼</div>
             <div className="ctrl-btn right" 
-              onTouchStart={() => updateVirtualKey('right', true)} 
-              onTouchEnd={() => updateVirtualKey('right', false)}>▶</div>
+              onPointerDown={() => updateVirtualKey('right', true)} 
+              onPointerUp={() => updateVirtualKey('right', false)}
+              onPointerLeave={() => updateVirtualKey('right', false)}>▶</div>
           </div>
         </div>
 
@@ -1202,16 +1206,19 @@ export default function App() {
           {vehicleFolder === 'helicopter' && (
             <>
               <div className="ctrl-btn action-btn lift" 
-                onTouchStart={() => updateVirtualKey('up', true)} 
-                onTouchEnd={() => updateVirtualKey('up', false)}>🚀 BAY LÊN</div>
+                onPointerDown={() => updateVirtualKey('up', true)} 
+                onPointerUp={() => updateVirtualKey('up', false)}
+                onPointerLeave={() => updateVirtualKey('up', false)}>🚀 BAY LÊN</div>
               <div className="ctrl-btn action-btn land" 
-                onTouchStart={() => updateVirtualKey('down', true)} 
-                onTouchEnd={() => updateVirtualKey('down', false)}>⚓ XUỐNG</div>
+                onPointerDown={() => updateVirtualKey('down', true)} 
+                onPointerUp={() => updateVirtualKey('down', false)}
+                onPointerLeave={() => updateVirtualKey('down', false)}>⚓ XUỐNG</div>
             </>
           )}
           <div className="ctrl-btn action-btn brake-btn" 
-            onTouchStart={() => updateVirtualKey('brake', true)} 
-            onTouchEnd={() => updateVirtualKey('brake', false)}>🛑 PHANH</div>
+            onPointerDown={() => updateVirtualKey('brake', true)} 
+            onPointerUp={() => updateVirtualKey('brake', false)}
+            onPointerLeave={() => updateVirtualKey('brake', false)}>🛑 PHANH</div>
         </div>
       </div>
 
@@ -1221,7 +1228,7 @@ export default function App() {
           bottom: 40px;
           left: 0;
           width: 100%;
-          padding: 0 40px;
+          padding: 0 20px;
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
@@ -1230,12 +1237,12 @@ export default function App() {
         }
 
         .ctrl-btn {
-          width: 70px;
-          height: 70px;
-          background: rgba(255, 255, 255, 0.1);
-          backdrop-filter: blur(15px);
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          border-radius: 20px;
+          width: 65px;
+          height: 65px;
+          background: rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(10px);
+          border: 1px solid rgba(255, 255, 255, 0.3);
+          border-radius: 50%;
           color: white;
           display: flex;
           align-items: center;
@@ -1243,22 +1250,23 @@ export default function App() {
           font-size: 24px;
           user-select: none;
           pointer-events: auto;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-          transition: transform 0.1s, background 0.1s;
+          box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+          transition: all 0.1s;
+          touch-action: none; /* Quan trọng để tránh zoom/scroll khi chơi */
         }
-        .ctrl-btn:active { transform: scale(0.9); background: rgba(255, 122, 47, 0.4); }
+        .ctrl-btn:active { transform: scale(0.85); background: rgba(255, 122, 47, 0.6); }
 
-        .d-pad { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-        .ctrl-row { display: flex; gap: 10px; }
+        .d-pad { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        .ctrl-row { display: flex; gap: 5px; }
 
-        .action-btns { display: flex; flex-direction: column; gap: 15px; }
-        .action-btn { width: 140px; height: 60px; font-size: 14px; font-weight: bold; border-radius: 15px; }
-        .brake-btn { background: rgba(255, 0, 0, 0.2); border-color: rgba(255, 0, 0, 0.3); }
-        .lift { background: rgba(0, 255, 0, 0.15); }
-        .land { background: rgba(0, 0, 255, 0.15); }
+        .action-btns { display: flex; flex-direction: column; gap: 10px; }
+        .action-btn { width: 120px; height: 55px; font-size: 13px; font-weight: bold; border-radius: 15px; }
+        .brake-btn { background: rgba(255, 0, 0, 0.3); }
+        .lift { background: rgba(0, 255, 0, 0.2); }
+        .land { background: rgba(0, 0, 255, 0.2); }
 
-        /* Chỉ hiện phím ảo trên thiết bị di động hoặc màn hình nhỏ */
-        @media (min-width: 1024px) {
+        /* Chỉ ẩn trên màn hình cực lớn, còn lại cho hiện hết để test */
+        @media (min-width: 1400px) {
           .mobile-controls { display: none; }
         }
       `}</style>
