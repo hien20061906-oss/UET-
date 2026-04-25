@@ -1120,141 +1120,48 @@ export default function App() {
         <div className="heli-controls">
           <h3>🚁 ĐIỀU KHIỂN</h3>
           <p><b>W / S:</b> Tiến / Lùi</p>
-          <p><b>Q / E:</b> Xoay thân (Yaw)</p>
-          <p><b>Space:</b> Bay lên & Phanh</p>
+          <p><b>Q / E:</b> Xoay thân</p>
+          <p><b>Space:</b> Bay lên</p>
           <p><b>Shift:</b> Bay xuống</p>
         </div>
       )}
 
-      <style>{`
-        .heli-controls {
-          position: absolute;
-          bottom: 20px;
-          left: 20px;
-          background: rgba(0, 0, 0, 0.7);
-          color: white;
-          padding: 15px;
-          border-radius: 12px;
-          font-family: sans-serif;
-          pointer-events: none;
-          z-index: 100;
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          backdrop-filter: blur(5px);
-        }
-        .heli-controls h3 { margin: 0 0 10px 0; font-size: 14px; color: #FF7A2F; }
-        .heli-controls p { margin: 5px 0; font-size: 12px; }
-        .heli-controls b { color: #5bc0de; }
-      `}</style>
-
-      <Canvas 
-        shadows 
-        camera={{ position: [0, 5, 10], fov: 50 }} 
-        style={{ background: '#87ceeb' }}
-        gl={{ antialias: true, stencil: false, depth: true, powerPreference: "high-performance" }}
-      >
+      <Canvas shadows camera={{ position: [0, 5, 10], fov: 50 }}>
         <color attach="background" args={['#87ceeb']} />
         <fog attach="fog" args={['#87ceeb', 10, 150]} />
-        
         <Sky sunPosition={[100, 20, 100]} />
-        
-        {/* Cinematic Lighting - Bright Theme */}
-        <ambientLight intensity={0.6} />
-        <spotLight position={[20, 50, 20]} angle={0.2} penumbra={1} intensity={1.5} castShadow />
-        <directionalLight position={[-10, 20, 5]} intensity={1} color="#ffffff" />
-        
-        {/* Environment Map tạo độ bóng kim loại chuyên nghiệp */}
-        <React.Suspense fallback={null}>
-          <Environment preset="park" />
-          <ContactShadows 
-            position={[0, 0, 0]} 
-            opacity={0.4} 
-            scale={40} 
-            blur={2} 
-            far={4.5} 
-          />
-        </React.Suspense>
-
-        <Game vehicleFolder={vehicleFolder} setVehicleFolder={setVehicleFolder} virtualKeys={virtualKeys} />
+        <Environment preset="park" />
+        <ContactShadows resolution={1024} scale={20} blur={2} opacity={0.5} far={10} />
+        <Game vehicleFolder={vehicleFolder} />
         <Preload all />
       </Canvas>
 
-      {/* Mobile Controls Overlay */}
+      {/* Mobile Controls */}
       <div className="mobile-controls">
         <div className="d-pad">
-          <div className="ctrl-btn up" 
-            onPointerDown={() => updateVirtualKey('forward', true)} 
-            onPointerUp={() => updateVirtualKey('forward', false)}
-            onPointerLeave={() => updateVirtualKey('forward', false)}>▲</div>
+          <div className="ctrl-btn up" onPointerDown={() => updateVirtualKey('forward', true)} onPointerUp={() => updateVirtualKey('forward', false)} onPointerLeave={() => updateVirtualKey('forward', false)}>▲</div>
           <div className="ctrl-row">
-            <div className="ctrl-btn left" 
-              onPointerDown={() => updateVirtualKey('left', true)} 
-              onPointerUp={() => updateVirtualKey('left', false)}
-              onPointerLeave={() => updateVirtualKey('left', false)}>◀</div>
-            <div className="ctrl-btn down" 
-              onPointerDown={() => updateVirtualKey('backward', true)} 
-              onPointerUp={() => updateVirtualKey('backward', false)}
-              onPointerLeave={() => updateVirtualKey('backward', false)}>▼</div>
-            <div className="ctrl-btn right" 
-              onPointerDown={() => updateVirtualKey('right', true)} 
-              onPointerUp={() => updateVirtualKey('right', false)}
-              onPointerLeave={() => updateVirtualKey('right', false)}>▶</div>
+            <div className="ctrl-btn left" onPointerDown={() => updateVirtualKey('left', true)} onPointerUp={() => updateVirtualKey('left', false)} onPointerLeave={() => updateVirtualKey('left', false)}>◀</div>
+            <div className="ctrl-btn down" onPointerDown={() => updateVirtualKey('backward', true)} onPointerUp={() => updateVirtualKey('backward', false)} onPointerLeave={() => updateVirtualKey('backward', false)}>▼</div>
+            <div className="ctrl-btn right" onPointerDown={() => updateVirtualKey('right', true)} onPointerUp={() => updateVirtualKey('right', false)} onPointerLeave={() => updateVirtualKey('right', false)}>▶</div>
           </div>
         </div>
-
         <div className="action-btns">
           {vehicleFolder === 'helicopter' && (
             <>
-              <div className="ctrl-btn action-btn lift" 
-                onPointerDown={() => updateVirtualKey('up', true)} 
-                onPointerUp={() => updateVirtualKey('up', false)}
-                onPointerLeave={() => updateVirtualKey('up', false)}>🚀 BAY LÊN</div>
-              <div className="ctrl-btn action-btn land" 
-                onPointerDown={() => updateVirtualKey('down', true)} 
-                onPointerUp={() => updateVirtualKey('down', false)}
-                onPointerLeave={() => updateVirtualKey('down', false)}>⚓ XUỐNG</div>
+              <div className="ctrl-btn action-btn lift" onPointerDown={() => updateVirtualKey('up', true)} onPointerUp={() => updateVirtualKey('up', false)} onPointerLeave={() => updateVirtualKey('up', false)}>🚀 LÊN</div>
+              <div className="ctrl-btn action-btn land" onPointerDown={() => updateVirtualKey('down', true)} onPointerUp={() => updateVirtualKey('down', false)} onPointerLeave={() => updateVirtualKey('down', false)}>⚓ XUỐNG</div>
             </>
           )}
-          <div className="ctrl-btn action-btn brake-btn" 
-            onPointerDown={() => updateVirtualKey('brake', true)} 
-            onPointerUp={() => updateVirtualKey('brake', false)}
-            onPointerLeave={() => updateVirtualKey('brake', false)}>🛑 PHANH</div>
+          <div className="ctrl-btn action-btn brake-btn" onPointerDown={() => updateVirtualKey('brake', true)} onPointerUp={() => updateVirtualKey('brake', false)} onPointerLeave={() => updateVirtualKey('brake', false)}>🛑</div>
         </div>
       </div>
 
       <style>{`
-        .mobile-controls {
-          position: absolute;
-          bottom: 40px;
-          left: 0;
-          width: 100%;
-          padding: 0 20px;
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-end;
-          z-index: 500;
-          pointer-events: none;
-        }
-
-        .ctrl-btn {
-          width: 65px;
-          height: 65px;
-          background: rgba(255, 255, 255, 0.2);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(255, 255, 255, 0.3);
-          border-radius: 50%;
-          color: white;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 24px;
-          user-select: none;
-          pointer-events: auto;
-          box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-          transition: all 0.1s;
-          touch-action: none; /* Quan trọng để tránh zoom/scroll khi chơi */
-        }
-        .ctrl-btn:active { transform: scale(0.85); background: rgba(255, 122, 47, 0.6); }
-
+        .heli-controls { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.7); color: white; padding: 15px; border-radius: 12px; pointer-events: none; }
+        .mobile-controls { position: absolute; bottom: 40px; left: 0; width: 100%; padding: 0 20px; display: flex; justify-content: space-between; align-items: flex-end; z-index: 500; pointer-events: none; }
+        .ctrl-btn { width: 65px; height: 65px; background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px); border-radius: 50%; color: white; display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none; }
+        .ctrl-btn:active { background: rgba(255, 122, 47, 0.6); }
         .d-pad { display: flex; flex-direction: column; align-items: center; gap: 5px; }
         .ctrl-row { display: flex; gap: 5px; }
 
