@@ -5,12 +5,20 @@ import * as THREE from 'three';
 import { useGLTF, Environment, ContactShadows, Preload, Sky } from '@react-three/drei';
 
 // ─── CONTROLS ────────────────────────────────────────────────────────────────
-function usePlayerControls() {
+function usePlayerControls(virtualKeys = {}) {
   const keys = useRef({ 
     forward: false, backward: false, left: false, right: false, 
     brake: false, reset: false, boost: false, change: false,
     up: false, down: false, yawLeft: false, yawRight: false 
   });
+
+  // Đồng bộ phím ảo từ Mobile
+  useEffect(() => {
+    Object.keys(virtualKeys).forEach(k => {
+      keys.current[k] = virtualKeys[k];
+    });
+  }, [virtualKeys]);
+
   useEffect(() => {
     const down = (e) => {
       if (e.code === 'KeyW' || e.code === 'ArrowUp')    keys.current.forward  = true;
@@ -83,8 +91,9 @@ const Wheel = React.forwardRef(({ radius = 0.25, width = 0.24, leftSide, folder 
   );
 });
 
-const Car = ({ folder, lastPos, lastRot }) => {
-  const controls = usePlayerControls();
+const Car = ({ folder = 'default', lastPos, lastRot, virtualKeys }) => {
+  const chassisRef = useRef();
+  const controls = usePlayerControls(virtualKeys);
   const lastChange = useRef(false);
   const { camera } = useThree();
 
@@ -429,8 +438,8 @@ const Propeller = (props) => (
 );
 
 // ─── HELICOPTER ────────────────────────────────────────────────────────
-const Helicopter = ({ lastPos, lastRot }) => {
-  const controls = usePlayerControls();
+const Helicopter = ({ lastPos, lastRot, virtualKeys }) => {
+  const controls = usePlayerControls(virtualKeys);
   const { camera } = useThree();
   const firstFrame = useRef(true);
   const smoothRot = useRef(0);
@@ -539,9 +548,9 @@ const Helicopter = ({ lastPos, lastRot }) => {
 };
 
 // --- NEW SHIP COMPONENT (FROM SCRATCH) ---
-const Ship = ({ lastPos, lastRot }) => {
+const Ship = ({ lastPos, lastRot, virtualKeys }) => {
   const { scene } = useGLTF('/models/car/ship/chassis.glb');
-  const keys = usePlayerControls();
+  const keys = usePlayerControls(virtualKeys);
   const { camera, gl } = useThree();
   const smoothRot = useRef(0);
   const camAngle = useRef({ x: 0, y: Math.PI / 8, dist: 18 });
@@ -662,8 +671,8 @@ const MapObject = ({ filename, position, args = [2, 2, 2], scale = 1, rotation =
 };
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
-function Game({ vehicleFolder, setVehicleFolder }) {
-  const controls = usePlayerControls();
+function Game({ vehicleFolder, setVehicleFolder, virtualKeys }) {
+  const controls = usePlayerControls(virtualKeys);
   const lastChange = useRef(false);
   
   const lastPos = useRef([0, 0.5, 0]);
@@ -681,6 +690,7 @@ function Game({ vehicleFolder, setVehicleFolder }) {
           folder={vehicleFolder} 
           lastPos={lastPos} 
           lastRot={lastRot}
+          virtualKeys={virtualKeys}
         />
       )}
       <Ground />
@@ -694,6 +704,16 @@ export default function App() {
   const [showMenu, setShowMenu] = useState(false);
   const [showShop, setShowShop] = useState(false);
   
+  // Điều khiển Mobile
+  const [virtualKeys, setVirtualKeys] = useState({
+    forward: false, backward: false, left: false, right: false,
+    brake: false, up: false, down: false, yawLeft: false, yawRight: false
+  });
+
+  const updateVirtualKey = (key, value) => {
+    setVirtualKeys(prev => ({ ...prev, [key]: value }));
+  };
+
   // Hệ thống vàng và xe đã mở khóa
   const [gold, setGold] = useState(5000); // Tặng 5000 vàng khởi đầu
   const [unlockedVehicles, setUnlockedVehicles] = useState(['default']);
@@ -1155,9 +1175,93 @@ export default function App() {
           />
         </React.Suspense>
 
-        <Game vehicleFolder={vehicleFolder} setVehicleFolder={setVehicleFolder} />
+        <Game vehicleFolder={vehicleFolder} setVehicleFolder={setVehicleFolder} virtualKeys={virtualKeys} />
         <Preload all />
       </Canvas>
+
+      {/* Mobile Controls Overlay */}
+      <div className="mobile-controls">
+        <div className="d-pad">
+          <div className="ctrl-btn up" 
+            onTouchStart={() => updateVirtualKey('forward', true)} 
+            onTouchEnd={() => updateVirtualKey('forward', false)}>▲</div>
+          <div className="ctrl-row">
+            <div className="ctrl-btn left" 
+              onTouchStart={() => updateVirtualKey('left', true)} 
+              onTouchEnd={() => updateVirtualKey('left', false)}>◀</div>
+            <div className="ctrl-btn down" 
+              onTouchStart={() => updateVirtualKey('backward', true)} 
+              onTouchEnd={() => updateVirtualKey('backward', false)}>▼</div>
+            <div className="ctrl-btn right" 
+              onTouchStart={() => updateVirtualKey('right', true)} 
+              onTouchEnd={() => updateVirtualKey('right', false)}>▶</div>
+          </div>
+        </div>
+
+        <div className="action-btns">
+          {vehicleFolder === 'helicopter' && (
+            <>
+              <div className="ctrl-btn action-btn lift" 
+                onTouchStart={() => updateVirtualKey('up', true)} 
+                onTouchEnd={() => updateVirtualKey('up', false)}>🚀 BAY LÊN</div>
+              <div className="ctrl-btn action-btn land" 
+                onTouchStart={() => updateVirtualKey('down', true)} 
+                onTouchEnd={() => updateVirtualKey('down', false)}>⚓ XUỐNG</div>
+            </>
+          )}
+          <div className="ctrl-btn action-btn brake-btn" 
+            onTouchStart={() => updateVirtualKey('brake', true)} 
+            onTouchEnd={() => updateVirtualKey('brake', false)}>🛑 PHANH</div>
+        </div>
+      </div>
+
+      <style>{`
+        .mobile-controls {
+          position: absolute;
+          bottom: 40px;
+          left: 0;
+          width: 100%;
+          padding: 0 40px;
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          z-index: 500;
+          pointer-events: none;
+        }
+
+        .ctrl-btn {
+          width: 70px;
+          height: 70px;
+          background: rgba(255, 255, 255, 0.1);
+          backdrop-filter: blur(15px);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 20px;
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 24px;
+          user-select: none;
+          pointer-events: auto;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+          transition: transform 0.1s, background 0.1s;
+        }
+        .ctrl-btn:active { transform: scale(0.9); background: rgba(255, 122, 47, 0.4); }
+
+        .d-pad { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .ctrl-row { display: flex; gap: 10px; }
+
+        .action-btns { display: flex; flex-direction: column; gap: 15px; }
+        .action-btn { width: 140px; height: 60px; font-size: 14px; font-weight: bold; border-radius: 15px; }
+        .brake-btn { background: rgba(255, 0, 0, 0.2); border-color: rgba(255, 0, 0, 0.3); }
+        .lift { background: rgba(0, 255, 0, 0.15); }
+        .land { background: rgba(0, 0, 255, 0.15); }
+
+        /* Chỉ hiện phím ảo trên thiết bị di động hoặc màn hình nhỏ */
+        @media (min-width: 1024px) {
+          .mobile-controls { display: none; }
+        }
+      `}</style>
     </div>
   );
 }
