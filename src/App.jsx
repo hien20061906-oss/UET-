@@ -92,7 +92,6 @@ const Wheel = React.forwardRef(({ radius = 0.25, width = 0.24, leftSide, folder 
 });
 
 const Car = ({ folder = 'default', lastPos, lastRot, virtualKeys }) => {
-  const chassisRef = useRef();
   const controls = usePlayerControls(virtualKeys);
   const lastChange = useRef(false);
   const { camera } = useThree();
