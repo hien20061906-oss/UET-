@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Physics, useBox, usePlane, useRaycastVehicle, useCylinder } from '@react-three/cannon';
 import * as THREE from 'three';
-import { Canvas, useFrame, useThree, Html } from '@react-three/fiber';
-import { Physics, useBox, useRaycastVehicle, usePlane } from '@react-three/cannon';
-import { useGLTF, Environment, ContactShadows, Preload, Sky } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';
 
 // ─── CONTROLS ────────────────────────────────────────────────────────────────
 function usePlayerControls() {
@@ -43,258 +43,621 @@ function usePlayerControls() {
   return keys;
 }
 
-// ─── ASSETS ──────────────────────────────────────────────────────────────────
-const Ground = () => {
-  const [ref] = usePlane(() => ({ rotation: [-Math.PI / 2, 0, 0], position: [0, 0, 0] }));
-  return (
-    <mesh ref={ref} receiveShadow>
-      <planeGeometry args={[1000, 1000]} />
-      <meshStandardMaterial color="#f0d9b5" />
-    </mesh>
-  );
+const WheelModel = ({ leftSide, folder = 'default', visible = true }) => {
+  const wheelFile = folder === 'alternative' ? 'wheel2.glb' : 'wheel.glb';
+  const { scene } = useGLTF(`/models/car/${folder}/${wheelFile}`);
+  const copiedScene = React.useMemo(() => {
+    const clone = scene.clone();
+    
+    // Cách 2 Nâng Cao: Tự động tính toán tâm thực sự bằng Box3 và bù trừ (offset) về [0,0,0]
+    const box = new THREE.Box3().setFromObject(clone);
+    const center = box.getCenter(new THREE.Vector3());
+    clone.position.sub(center); // dời mô hình ngược lại đúng bằng khoảng cách lệch tâm
+    
+    // Bọc vào group để lưới xoay quanh tâm mới
+    const wrapper = new THREE.Group();
+    wrapper.add(clone);
+    return wrapper;
+  }, [scene]);
+
+  // Xoay bánh xe theo trục Y để quay mặt mâm bánh xe ra ngoài
+  return <primitive object={copiedScene} visible={visible} rotation={[0, leftSide ? -Math.PI / 2 : Math.PI / 2, 0]} />;
 };
 
-const MapObject = ({ filename, position, scale = 1, args }) => {
-  const { scene } = useGLTF(`/models/map/${filename}`);
-  const [ref] = useBox(() => ({ type: 'Static', position, args, mass: 0 }));
-  
-  useEffect(() => {
-    scene.traverse(child => {
-      if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-  }, [scene]);
+const Wheel = React.forwardRef(({ radius = 0.25, width = 0.24, leftSide, folder = 'default', visible = true }, ref) => {
+  useCylinder(() => ({
+    mass: 5,
+    type: 'Kinematic',
+    material: 'wheel',
+    collisionFilterGroup: 0,
+    collisionFilterMask: 0,
+    args: [radius, radius, width, 16],
+  }), ref);
 
   return (
     <mesh ref={ref}>
-      <primitive object={scene} scale={scale} />
+      <React.Suspense fallback={null}>
+        <WheelModel leftSide={leftSide} folder={folder} visible={visible} />
+      </React.Suspense>
     </mesh>
-  );
-};
-
-const Wheel = React.forwardRef(({ leftSide, folder = 'default' }, ref) => {
-  const { scene } = useGLTF(
-    folder === 'default' 
-      ? '/models/car/default/wheel.glb' 
-      : `/models/car/alternative/wheel2.glb`
-  );
-  
-  const clonedScene = useMemo(() => {
-    const clone = scene.clone();
-    clone.traverse(child => {
-      if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-    return clone;
-  }, [scene]);
-
-  return (
-    <group ref={ref}>
-      <primitive object={clonedScene} rotation-y={leftSide ? Math.PI : 0} scale={0.8} />
-    </group>
   );
 });
 
-const Chassis = ({ folder }) => {
-  const { scene } = useGLTF(
-    folder === 'default' 
-      ? '/models/car/default/chassis.glb' 
-      : `/models/car/alternative/chassis2.glb`
-  );
-  
-  useEffect(() => {
-    scene.traverse(child => {
-      if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-  }, [scene]);
-
-  return <primitive object={scene} />;
-};
-
-const Car = ({ folder = 'default', lastPos, lastRot }) => {
+const Car = ({ folder, lastPos, lastRot }) => {
   const controls = usePlayerControls();
+  const lastChange = useRef(false);
   const { camera } = useThree();
 
+  // --- Physics chassis  ---
+  const chassisWidth = 0.8;
+  const chassisHeight = 0.5;
+  const chassisDepth = 2.03;
+
   const [chassisRef, chassisApi] = useBox(() => ({
-    args: [2, 1, 4.2],
     mass: 150,
     position: lastPos.current,
     rotation: lastRot.current,
-    angularFactor: [0, 1, 0],
-    allowSleep: false
+    velocity: [0, 0, 0], 
+    angularVelocity: [0, 0, 0], 
+    args: [chassisWidth, chassisHeight, chassisDepth],
+    allowSleep: true,
+    linearDamping: 0.15,
+    angularDamping: 0.3,
   }));
 
-  const wheelRef1 = useRef();
-  const wheelRef2 = useRef();
-  const wheelRef3 = useRef();
-  const wheelRef4 = useRef();
+  // Đăng ký theo dõi tọa độ trực tiếp từ lõi vật lý (Chính xác nhất)
+  useEffect(() => {
+    const unsubPos = chassisApi.position.subscribe(v => { lastPos.current = v; });
+    const unsubRot = chassisApi.rotation.subscribe(v => { lastRot.current = v; });
+    return () => { unsubPos(); unsubRot(); };
+  }, [chassisApi, lastPos, lastRot]);
 
-  const wheelInfo = {
-    radius: 0.7,
+  // --- Wheel setup (G10 chuẩn) ---
+  const wheelRadius = 0.25;
+  const wheelHeight  = 0.24;
+
+  const wInfo = useMemo(() => ({
+    radius: wheelRadius,
     directionLocal: [0, -1, 0],
-    suspensionStiffness: 35,
+    suspensionStiffness: 60,
     suspensionRestLength: 0.35,
-    frictionSlip: 1.5,
-    dampingRelaxation: 2.5,
-    dampingCompression: 4.5,
     maxSuspensionForce: 100000,
-    rollInfluence: 0.01,
+    maxSuspensionTravel: 0.3,
+    dampingRelaxation: 2.3,
+    dampingCompression: 4.4,
+    frictionSlip: 1.5,
+    rollInfluence: 0.0, // Đặt bằng 0 để triệt tiêu hoàn toàn lực lật thân xe
     axleLocal: [-1, 0, 0],
-    chassisConnectionPointLocal: [1, 0, 1],
-    useCustomSlidingFriction: true,
-    customSlidingFriction: 0.5,
+    useCustomSlidingRotationalSpeed: true,
+    customSlidingRotationalSpeed: -30
+  }), []);
+
+  // Bảng cấu hình vị trí bánh xe và thân xe cho từng loại xe
+  const vehicleConfigs = {
+    default: {
+      front: -0.55,
+      back: 0.55,
+      width: 0.55,
+      wheelY: 0,
+      chassisY: -0.25
+    },
+    alternative: {
+      front: -0.82,
+      back: 0.82,
+      width: 0.4,
+      wheelY: -0.1,
+      chassisY: -0.25
+    }
   };
 
-  const wheelInfo1 = { ...wheelInfo, chassisConnectionPointLocal: [-1, -0.2, 1.8], isFrontWheel: true };
-  const wheelInfo2 = { ...wheelInfo, chassisConnectionPointLocal: [1, -0.2, 1.8], isFrontWheel: true };
-  const wheelInfo3 = { ...wheelInfo, chassisConnectionPointLocal: [-1, -0.2, -1.2], isFrontWheel: false };
-  const wheelInfo4 = { ...wheelInfo, chassisConnectionPointLocal: [1, -0.2, -1.2], isFrontWheel: false };
+  const config = vehicleConfigs[folder] || vehicleConfigs.default;
+  const { front: frontOffset, back: backOffset, width: offsetWidth, wheelY, chassisY } = config;
 
-  const [vehicle, api] = useRaycastVehicle(() => ({
+  const wheelInfos = useMemo(() => [
+    { ...wInfo, chassisConnectionPointLocal: [-offsetWidth, wheelY, frontOffset], isFrontWheel: true,  frictionSlip: 1.5 },
+    { ...wInfo, chassisConnectionPointLocal: [ offsetWidth, wheelY, frontOffset], isFrontWheel: true,  frictionSlip: 1.5 },
+    { ...wInfo, chassisConnectionPointLocal: [-offsetWidth, wheelY, backOffset ], isFrontWheel: false, frictionSlip: 1.5 },
+    { ...wInfo, chassisConnectionPointLocal: [ offsetWidth, wheelY, backOffset ], isFrontWheel: false, frictionSlip: 1.5 },
+  ], [wInfo, folder, frontOffset, backOffset, offsetWidth, wheelY]);
+
+  const wheel0 = useRef(null);
+  const wheel1 = useRef(null);
+  const wheel2 = useRef(null);
+  const wheel3 = useRef(null);
+  const firstFrame = useRef(true); // <--- Chuyển lên đây cho đúng luật React hooks
+
+  const [vehicle, vehicleApi] = useRaycastVehicle(() => ({
     chassisBody: chassisRef,
-    wheels: [wheelRef1, wheelRef2, wheelRef3, wheelRef4],
-    wheelInfos: [wheelInfo1, wheelInfo2, wheelInfo3, wheelInfo4],
+    wheelInfos,
+    wheels: [wheel0, wheel1, wheel2, wheel3],
+    indexForwardAxis: 2,
+    indexRightAxis:   0,
+    indexUpAxis:      1,
   }));
 
-  useFrame(() => {
-    const { forward, backward, left, right, brake, reset, boost } = controls.current;
-    const force = boost ? 400 : 250;
-    const steer = 0.4;
+  // --- Models ---
+  const modelFolder = folder;
+  const chassisFile = folder === 'alternative' ? 'chassis2.glb' : 'chassis.glb';
+  const { scene: chassisScene } = useGLTF(`/models/car/${modelFolder}/${chassisFile}`);
 
-    for (let i = 0; i < 2; i++) api.setSteeringValue(left ? steer : right ? -steer : 0, i);
-    for (let i = 0; i < 4; i++) {
-      api.applyEngineForce(forward ? -force : backward ? force : 0, i);
-      api.setBrake(brake ? 30 : 0, i);
-    }
 
-    if (reset) {
-      chassisApi.position.set(0, 1, 0);
-      chassisApi.rotation.set(0, 0, 0);
+  // Steering state
+  const currentSteering = useRef(0);
+
+  const smoothRot = useRef(0);
+  const isBraking = useRef(false); // Trạng thái phanh để tối ưu hóa damping
+
+  // --- Camera state ---
+  const camPos    = useRef(new THREE.Vector3(0, 5, 10));
+  const camTarget = useRef(new THREE.Vector3());
+
+  // --- Mouse camera control ---
+  const camAngle = useRef({ x: 0, y: 0.35, dist: 7 });
+  useEffect(() => {
+    let middleDown = false;
+    const onWheel = (e) => {
+      camAngle.current.dist = Math.max(3, Math.min(25, camAngle.current.dist + e.deltaY * 0.01));
+    };
+    const onDown  = (e) => { if (e.button === 1) middleDown = true;  };
+    const onUp    = (e) => { if (e.button === 1) middleDown = false; };
+    const onMove  = (e) => {
+      if (!middleDown) return;
+      camAngle.current.x -= e.movementX * 0.005;
+      camAngle.current.y  = Math.max(0.05, Math.min(Math.PI / 2.2, camAngle.current.y + e.movementY * 0.005));
+    };
+    window.addEventListener('wheel',       onWheel);
+    window.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointerup',   onUp);
+    window.addEventListener('pointermove', onMove);
+    return () => {
+      window.removeEventListener('wheel',       onWheel);
+      window.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointerup',   onUp);
+      window.removeEventListener('pointermove', onMove);
+    };
+  }, []);
+
+  // ─── MAIN LOOP ───────────────────────────────────────────────────────────
+  useFrame((_, delta) => {
+    const { forward, backward, left, right, brake, reset, boost, change } = controls.current;
+    
+    const dt = Math.min(delta, 0.05); // clamp delta để tránh spike lag
+
+    // Chống bốc đầu triệt để đã bị xoá vì gây lỗi không chạy được
+
+    // Reset xe
+    if (reset && chassisRef.current) {
+      chassisApi.position.set(chassisRef.current.position.x, chassisRef.current.position.y + 0.5, chassisRef.current.position.z);
       chassisApi.velocity.set(0, 0, 0);
+      chassisApi.angularVelocity.set(0, 0, 0);
+      chassisApi.rotation.set(0, chassisRef.current.rotation.y, 0);
     }
 
-    if (chassisRef.current) {
-      const pos = chassisRef.current.position;
-      lastPos.current = [pos.x, pos.y, pos.z];
-      lastRot.current = [0, chassisRef.current.rotation.y, 0];
-      const offset = new THREE.Vector3(0, 5, 10).applyQuaternion(chassisRef.current.quaternion);
-      camera.position.lerp(new THREE.Vector3(pos.x + offset.x, pos.y + offset.y, pos.z + offset.z), 0.1);
-      camera.lookAt(pos.x, pos.y + 1, pos.z);
+    // G10 chuẩn - điều chỉnh để có thể quay xe (donuts)
+    const engineForce = boost ? 900 : 500; // Tăng mạnh lực máy khi giữ Shift (boost)
+    const maxSteerVal = Math.PI * 0.25; // Trả góc đánh lái về 45 độ cho tự nhiên, 90 độ quá ảo
+    const steerSpeed = delta * 12; // Tốc độ xoay vô lăng nhanh hơn
+
+    // Steering làm mượt
+    if (left) {
+      currentSteering.current += steerSpeed;
+    } else if (right) {
+      currentSteering.current -= steerSpeed;
+    } else {
+      if (Math.abs(currentSteering.current) > steerSpeed) {
+        currentSteering.current -= steerSpeed * Math.sign(currentSteering.current);
+      } else {
+        currentSteering.current = 0;
+      }
     }
+
+    if (Math.abs(currentSteering.current) > maxSteerVal) {
+      currentSteering.current = Math.sign(currentSteering.current) * maxSteerVal;
+    }
+
+    vehicleApi.setSteeringValue(currentSteering.current, 0);
+    vehicleApi.setSteeringValue(currentSteering.current, 1);
+
+    // Engine
+    if (forward) {
+      vehicleApi.applyEngineForce(engineForce, 2);
+      vehicleApi.applyEngineForce(engineForce, 3);
+      // Chống bốc đầu (Wheelie) khi tăng tốc bằng cách ghì mũi xe xuống
+      chassisApi.applyLocalForce([0, -500, 0], [0, 0, -0.55]);
+    } else if (backward) {
+      vehicleApi.applyEngineForce(-engineForce, 2);
+      vehicleApi.applyEngineForce(-engineForce, 3);
+    } else {
+      vehicleApi.applyEngineForce(0, 2);
+      vehicleApi.applyEngineForce(0, 3);
+    }
+
+    // Logic Phanh tối ưu để tránh rung lắc
+    if (brake !== isBraking.current) {
+      isBraking.current = brake;
+      if (brake) {
+        chassisApi.linearDamping.set(0.95);  // Tăng lên 0.95 để phanh "ăn" hơn, dừng nhanh hơn
+        chassisApi.angularDamping.set(1.0); // KHÓA CHẾT XOAY: Tuyệt đối không cho xe chúi đầu hay rung lắc
+      } else {
+        chassisApi.linearDamping.set(0.15);
+        chassisApi.angularDamping.set(0.3);
+      }
+    }
+
+    if (brake) {
+      // Không dùng phanh bánh xe để tránh làm lò xo bị nén gây chúi đầu
+      vehicleApi.setBrake(0, 0);
+      vehicleApi.setBrake(0, 1);
+      vehicleApi.setBrake(0, 2);
+      vehicleApi.setBrake(0, 3);
+    } else if (!forward && !backward) {
+      // Tự động phanh (Engine Brake) CHỈ bánh sau để chống lật đít khi nhả ga
+      const autoBrake = 15; 
+      vehicleApi.setBrake(0, 0);
+      vehicleApi.setBrake(0, 1);
+      vehicleApi.setBrake(autoBrake, 2);
+      vehicleApi.setBrake(autoBrake, 3);
+    } else {
+      vehicleApi.setBrake(0, 0);
+      vehicleApi.setBrake(0, 1);
+      vehicleApi.setBrake(0, 2);
+      vehicleApi.setBrake(0, 3);
+    }
+
+    // ─── CAMERA ──────────────────────────────────────────────────────────
+    if (!chassisRef.current) return;
+
+    const currentPosition = new THREE.Vector3();
+    chassisRef.current.getWorldPosition(currentPosition);
+    const rawRot = chassisRef.current.rotation.y;
+
+    // Làm mượt góc xoay để chống giật
+    let diff = rawRot - smoothRot.current;
+    diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
+    
+    // Nếu là khung hình đầu tiên của xe mới, cho camera nhảy thẳng đến vị trí chuẩn
+    if (firstFrame.current) {
+      smoothRot.current = rawRot;
+      firstFrame.current = false;
+    } else {
+      smoothRot.current += diff * (1 - Math.exp(-20 * dt));
+    }
+    
+    const dist = camAngle.current.dist;
+    const ax = camAngle.current.x;
+    const ay = camAngle.current.y;
+    
+    const horizontalDist = Math.cos(ay) * dist;
+    const offsetX = Math.sin(ax) * horizontalDist;
+    const offsetY = Math.sin(ay) * dist;
+    const offsetZ = Math.cos(ax) * horizontalDist;
+    
+    const idealOffset = new THREE.Vector3(offsetX, offsetY, offsetZ);
+    idealOffset.applyEuler(new THREE.Euler(0, smoothRot.current, 0));
+    
+    // Khóa cứng Camera (copy) để triệt tiêu hiện tượng nhòe/bóng ma khi chạy nhanh
+    camera.position.copy(currentPosition).add(idealOffset);
+    
+    const lookAtPos = currentPosition.clone().add(new THREE.Vector3(0, 0, -2).applyEuler(new THREE.Euler(0, smoothRot.current, 0)));
+    camera.lookAt(lookAtPos);
   });
 
   return (
     <group ref={vehicle}>
-      <group ref={chassisRef}>
-        <Chassis folder={folder} />
-      </group>
-      <Wheel ref={wheelRef1} leftSide folder={folder} />
-      <Wheel ref={wheelRef2} folder={folder} />
-      <Wheel ref={wheelRef3} leftSide folder={folder} />
-      <Wheel ref={wheelRef4} folder={folder} />
+      <mesh key={folder} ref={chassisRef} castShadow>
+        <meshStandardMaterial visible={false} />
+        <group position={[0, chassisY, 0]} rotation={[0, Math.PI / 2, 0]}>
+          <primitive object={chassisScene} />
+        </group>
+      </mesh>
+
+      <Wheel key={`${folder}-0`} ref={wheel0} radius={wheelRadius} width={wheelHeight} leftSide={true}  folder={folder} visible={folder !== 'ship'} />
+      <Wheel key={`${folder}-1`} ref={wheel1} radius={wheelRadius} width={wheelHeight} leftSide={false} folder={folder} visible={folder !== 'ship'} />
+      <Wheel key={`${folder}-2`} ref={wheel2} radius={wheelRadius} width={wheelHeight} leftSide={true}  folder={folder} visible={folder !== 'ship'} />
+      <Wheel key={`${folder}-3`} ref={wheel3} radius={wheelRadius} width={wheelHeight} leftSide={false} folder={folder} visible={folder !== 'ship'} />
     </group>
   );
 };
+
+// ─── GROUND ──────────────────────────────────────────────────────────────────
+const Ground = () => {
+  const [ref] = usePlane(() => ({ rotation: [-Math.PI / 2, 0, 0], position: [0, 0, 0] }));
+  return (
+    <mesh ref={ref} receiveShadow>
+      <planeGeometry args={[2000, 2000]} />
+      <meshStandardMaterial color="#FF7A2F" roughness={1} metalness={0} />
+    </mesh>
+  );
+};
+
+// Component phụ để tải và điều khiển cánh quạt từ file riêng
+const PropellerModel = ({ url, axis = 'y', position = [0, 0, 0], rotation = [0, 0, 0], scale = 1, offset = [0, 0, 0] }) => {
+  const { nodes } = useGLTF(url);
+  const rotRef = useRef();
+  
+  // Trích xuất và căn tâm trực tiếp các mesh từ file GLTF để đảm bảo hiển thị 100%
+  const meshes = React.useMemo(() => {
+    const list = [];
+    Object.values(nodes).forEach(node => {
+      if (node.isMesh) {
+        // Clone và căn tâm hình học cho geometry để xoay đúng trục
+        const geom = node.geometry.clone();
+        geom.center(); 
+        // Cho phép nhích tâm xoay thủ công nếu cần
+        geom.translate(offset[0], offset[1], offset[2]);
+        list.push({ geometry: geom, material: node.material });
+      }
+    });
+    return list;
+  }, [nodes, offset]);
+
+  const keys = usePlayerControls();
+  const speedRef = useRef(0);
+
+  useFrame((_, delta) => {
+    // Nội suy tốc độ để tạo hiệu ứng khởi động và dừng lại mượt mà
+    const targetSpeed = keys.current.up ? 50 : 0;
+    const lerpFactor = keys.current.up ? 0.05 : 0.005;
+    speedRef.current = THREE.MathUtils.lerp(speedRef.current, targetSpeed, lerpFactor);
+
+    if (rotRef.current && speedRef.current > 0.1) {
+      rotRef.current.rotation[axis] += delta * speedRef.current;
+    }
+  });
+
+  return (
+    <group position={position} rotation={rotation}>
+      <group ref={rotRef}>
+        {/* Vẽ trực tiếp từng mesh bằng tag <mesh> tiêu chuẩn của R3F */}
+        {meshes.map((m, i) => (
+          <mesh key={i} geometry={m.geometry} material={m.material} scale={scale} />
+        ))}
+      </group>
+    </group>
+  );
+};
+
+const Propeller = (props) => (
+  <React.Suspense fallback={
+    <mesh position={props.position} rotation={props.rotation}>
+      <boxGeometry args={[1, 0.05, 1]} />
+      <meshStandardMaterial color="red" wireframe />
+    </mesh>
+  }>
+    <PropellerModel {...props} />
+  </React.Suspense>
+);
 
 // ─── HELICOPTER ────────────────────────────────────────────────────────
 const Helicopter = ({ lastPos, lastRot }) => {
   const controls = usePlayerControls();
   const { camera } = useThree();
-  const [chassisRef, chassisApi] = useBox(() => ({
-    args: [2, 1.5, 5],
-    mass: 100,
+  const firstFrame = useRef(true);
+  const smoothRot = useRef(0);
+  const camAngle = useRef({ x: 0, y: 0.35, dist: 8 });
+
+  useEffect(() => {
+    let middleDown = false;
+    const onWheel = (e) => {
+      camAngle.current.dist = Math.max(3, Math.min(30, camAngle.current.dist + e.deltaY * 0.01));
+    };
+    const onDown  = (e) => { if (e.button === 1) middleDown = true;  };
+    const onUp    = (e) => { if (e.button === 1) middleDown = false; };
+    const onMove  = (e) => {
+      if (!middleDown) return;
+      camAngle.current.x -= e.movementX * 0.005;
+      camAngle.current.y  = Math.max(0.05, Math.min(Math.PI / 2.2, camAngle.current.y + e.movementY * 0.005));
+    };
+    window.addEventListener('wheel',       onWheel);
+    window.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointerup',   onUp);
+    window.addEventListener('pointermove', onMove);
+    return () => {
+      window.removeEventListener('wheel',       onWheel);
+      window.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointerup',   onUp);
+      window.removeEventListener('pointermove', onMove);
+    };
+  }, []);
+
+  const [ref, api] = useBox(() => ({
+    mass: 500,
     position: lastPos.current,
     rotation: lastRot.current,
-    angularFactor: [0, 1, 0],
-    linearDamping: 0.95,
+    args: [1, 1, 3],
+    linearDamping: 0.8, 
     angularDamping: 0.95,
+    angularFactor: [0, 1, 0] // Khóa trục X và Z để máy bay luôn thăng bằng, không bị nghiêng
   }));
 
-  const { scene: heliScene } = useGLTF('/models/car/helicopter/chassis.glb');
-  const { scene: rotorMain } = useGLTF('/models/car/helicopter/rotor_main.glb');
-  const { scene: rotorTail } = useGLTF('/models/car/helicopter/rotor_tail.glb');
-  const mainRotorRef = useRef();
-  const tailRotorRef = useRef();
+  // Theo dõi tọa độ
+  useEffect(() => {
+    const unsubPos = api.position.subscribe(v => { lastPos.current = v; });
+    const unsubRot = api.rotation.subscribe(v => { lastRot.current = v; });
+    return () => { unsubPos(); unsubRot(); };
+  }, [api, lastPos, lastRot]);
 
-  useFrame(() => {
-    const { forward, backward, left, right, up, down } = controls.current;
-    if (up) chassisApi.applyForce([0, 1200, 0], [0, 0, 0]);
-    if (down) chassisApi.applyForce([0, -1200, 0], [0, 0, 0]);
+  const { scene } = useGLTF('/models/car/helicopter/chassis.glb');
+  
+  useFrame((state, delta) => {
+    const { forward, backward, left, right, up, down, yawLeft, yawRight } = controls.current;
+    const dt = Math.min(delta, 0.05);
 
-    const direction = new THREE.Vector3(0, 0, forward ? -1 : backward ? 1 : 0).applyQuaternion(chassisRef.current.quaternion);
-    chassisApi.applyForce([direction.x * 800, 0, direction.z * 800], [0, 0, 0]);
+    // Lực bay
+    const liftForce = 12000;
+    const moveForce = 5000;
+    const torque = 1000;
 
-    if (left) chassisApi.angularVelocity.set(0, 2, 0);
-    else if (right) chassisApi.angularVelocity.set(0, -2, 0);
-    else chassisApi.angularVelocity.set(0, 0, 0);
-
-    if (mainRotorRef.current) mainRotorRef.current.rotation.y += 0.5;
-    if (tailRotorRef.current) tailRotorRef.current.rotation.x += 0.5;
-
-    if (chassisRef.current) {
-      const pos = chassisRef.current.position;
-      const offset = new THREE.Vector3(0, 6, 15).applyQuaternion(chassisRef.current.quaternion);
-      camera.position.lerp(new THREE.Vector3(pos.x + offset.x, pos.y + offset.y, pos.z + offset.z), 0.1);
-      camera.lookAt(pos.x, pos.y, pos.z);
+    if (up) {
+      api.linearDamping.set(0.99);
+      api.applyLocalForce([0, liftForce, 0], [0, 0, 0]);
+    } else {
+      api.linearDamping.set(0.8);
     }
+    if (down) api.applyLocalForce([0, -liftForce, 0], [0, 0, 0]);
+    
+    if (forward) api.applyLocalForce([0, 0, -moveForce], [0, 0, 0]);
+    if (backward) api.applyLocalForce([0, 0, moveForce], [0, 0, 0]);
+    
+    // Q/E để xoay (Yaw)
+    if (yawLeft) api.applyTorque([0, torque, 0]);
+    if (yawRight) api.applyTorque([0, -torque, 0]);
+
+    // Camera
+    if (!ref.current) return;
+    const currentPosition = new THREE.Vector3();
+    ref.current.getWorldPosition(currentPosition);
+    const rawRot = ref.current.rotation.y;
+
+    const dist = camAngle.current.dist;
+    const ax = camAngle.current.x;
+    const ay = camAngle.current.y;
+    
+    const horizontalDist = Math.cos(ay) * dist;
+    const offsetX = Math.sin(ax) * horizontalDist;
+    const offsetY = Math.sin(ay) * dist;
+    const offsetZ = Math.cos(ax) * horizontalDist;
+    
+    const idealOffset = new THREE.Vector3(offsetX, offsetY, offsetZ);
+    idealOffset.applyEuler(new THREE.Euler(0, rawRot, 0));
+    state.camera.position.copy(currentPosition).add(idealOffset);
+    
+    const lookAtPos = currentPosition.clone().add(new THREE.Vector3(0, 0, -2).applyEuler(new THREE.Euler(0, rawRot, 0)));
+    state.camera.lookAt(lookAtPos);
   });
 
   return (
-    <group ref={chassisRef}>
-      <primitive object={heliScene} />
-      <primitive ref={mainRotorRef} object={rotorMain} position={[0, 1.5, 0]} />
-      <primitive ref={tailRotorRef} object={rotorTail} position={[0, 0.5, -2.5]} />
+    <group ref={ref}>
+      <React.Suspense fallback={<mesh><boxGeometry args={[1, 1, 3]} /><meshStandardMaterial color="gray" /></mesh>}>
+        <primitive object={scene} />
+      </React.Suspense>
+      {/* Tải cánh quạt từ các file riêng biệt */}
+      <Propeller url="/models/car/helicopter/rotor_main.glb" axis="y" position={[-0.009, 0.75, 0.01]} scale={0.01} />
+      <Propeller url="/models/car/helicopter/rotor_tail.glb" axis="y" position={[-0.13, 0.83, 1.59]} scale={0.002} rotation={[0, 0, Math.PI / 2]} offset={[0, 0, 0]} />
     </group>
   );
 };
 
-// ─── SHIP ────────────────────────────────────────────────────────
+// --- NEW SHIP COMPONENT (FROM SCRATCH) ---
 const Ship = ({ lastPos, lastRot }) => {
   const { scene } = useGLTF('/models/car/ship/chassis.glb');
   const keys = usePlayerControls();
-  const { camera } = useThree();
-  const [chassisRef, chassisApi] = useBox(() => ({
-    args: [4, 2, 10],
-    mass: 500,
+  const { camera, gl } = useThree();
+  const smoothRot = useRef(0);
+  const camAngle = useRef({ x: 0, y: Math.PI / 8, dist: 18 });
+  const firstFrame = useRef(true);
+
+  const [ref, api] = useBox(() => ({
+    mass: 1000,
     position: lastPos.current,
     rotation: lastRot.current,
+    angularDamping: 0.99,
+    linearDamping: 0.8,
     angularFactor: [0, 1, 0],
-    linearDamping: 0.9,
-    angularDamping: 0.9,
   }));
 
-  useFrame(() => {
-    const { forward, backward, left, right } = keys.current;
-    if (forward) {
-      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(chassisRef.current.quaternion);
-      chassisApi.applyForce([dir.x * 5000, 0, dir.z * 5000], [0, 0, 0]);
-    }
-    if (left) chassisApi.angularVelocity.set(0, 5, 0);
-    else if (right) chassisApi.angularVelocity.set(0, -5, 0);
-    else chassisApi.angularVelocity.set(0, 0, 0);
+  useEffect(() => {
+    const move = (e) => {
+      if (document.pointerLockElement) {
+        camAngle.current.x -= e.movementX * 0.002;
+        camAngle.current.y = Math.max(0.05, Math.min(Math.PI / 2.5, camAngle.current.y + e.movementY * 0.002));
+      }
+    };
+    const wheel = (e) => {
+      camAngle.current.dist = Math.max(8, Math.min(40, camAngle.current.dist + e.deltaY * 0.01));
+    };
+    const down = (e) => {
+      if (e.button === 1) { // Middle mouse down
+        gl.domElement.requestPointerLock();
+      }
+    };
+    const up = (e) => {
+      if (e.button === 1) { // Middle mouse up
+        if (document.pointerLockElement) document.exitPointerLock();
+      }
+    };
+    window.addEventListener('mousedown', down);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('mousemove', move);
+    window.addEventListener('wheel', wheel);
+    return () => {
+      window.removeEventListener('mousedown', down);
+      window.removeEventListener('mouseup', up);
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('wheel', wheel);
+    };
+  }, [gl]);
 
-    if (chassisRef.current) {
-      const pos = chassisRef.current.position;
-      const offset = new THREE.Vector3(0, 8, 20).applyQuaternion(chassisRef.current.quaternion);
-      camera.position.lerp(new THREE.Vector3(pos.x + offset.x, pos.y + offset.y, pos.z + offset.z), 0.05);
-      camera.lookAt(pos.x, pos.y + 2, pos.z);
+  useFrame((state, delta) => {
+    if (!ref.current) return;
+    const { forward, backward, left, right, yawLeft, yawRight } = keys.current;
+    const moveForce = 4000;
+    const torque = 1200;
+
+    if (forward) api.applyLocalForce([0, 0, -moveForce], [0, 0, 0]);
+    if (backward) api.applyLocalForce([0, 0, moveForce], [0, 0, 0]);
+    if (left || yawLeft) api.applyTorque([0, torque, 0]);
+    if (right || yawRight) api.applyTorque([0, -torque, 0]);
+
+    // --- CAMERA LOGIC (PROFESSIONAL) ---
+    const currentPosition = new THREE.Vector3();
+    ref.current.getWorldPosition(currentPosition);
+    const rawRot = ref.current.rotation.y;
+
+    // Làm mượt góc xoay
+    let diff = rawRot - smoothRot.current;
+    diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
+    
+    if (firstFrame.current) {
+      smoothRot.current = rawRot;
+      firstFrame.current = false;
+    } else {
+      smoothRot.current += diff * (1 - Math.exp(-20 * delta));
     }
+
+    const dist = camAngle.current.dist;
+    const ax = camAngle.current.x;
+    const ay = camAngle.current.y;
+    
+    const horizontalDist = Math.cos(ay) * dist;
+    const offsetX = Math.sin(ax) * horizontalDist;
+    const offsetY = Math.sin(ay) * dist;
+    const offsetZ = Math.cos(ax) * horizontalDist;
+    
+    const idealOffset = new THREE.Vector3(offsetX, offsetY, offsetZ);
+    idealOffset.applyEuler(new THREE.Euler(0, smoothRot.current, 0));
+    
+    // Khóa cứng camera để tránh nhòe hình
+    camera.position.copy(currentPosition).add(idealOffset);
+    
+    const lookAtPos = currentPosition.clone().add(new THREE.Vector3(0, 1, -2).applyEuler(new THREE.Euler(0, smoothRot.current, 0)));
+    camera.lookAt(lookAtPos);
   });
 
-  return <group ref={chassisRef}><primitive object={scene} scale={1.5} /></group>;
+  return (
+    <group ref={ref}>
+      <React.Suspense fallback={<mesh><boxGeometry args={[2, 1, 5]} /><meshStandardMaterial color="blue" /></mesh>}>
+        <primitive object={scene} />
+      </React.Suspense>
+    </group>
+  );
+};
+
+// ─── MAP OBJECT ──────────────────────────────────────────────────────────────
+const MapObject = ({ filename, position, args = [2, 2, 2], scale = 1, rotation = [0, 0, 0] }) => {
+  const { scene } = useGLTF(`/models/map/${filename}`);
+  const [ref] = useBox(() => ({ type: 'Static', position, args, rotation }));
+  return <primitive ref={ref} object={scene.clone()} scale={scale} />;
 };
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
-function Game({ vehicleFolder }) {
+function Game({ vehicleFolder, setVehicleFolder }) {
+  const controls = usePlayerControls();
+  const lastChange = useRef(false);
+  
   const lastPos = useRef([0, 0.5, 0]);
   const lastRot = useRef([0, 0, 0]);
+
   return (
     <Physics gravity={[0, -9.81, 0]} defaultContactMaterial={{ friction: 0, restitution: 0.1 }}>
       {vehicleFolder === 'helicopter' ? (
@@ -302,7 +665,12 @@ function Game({ vehicleFolder }) {
       ) : vehicleFolder === 'ship' ? (
         <Ship key="ship" lastPos={lastPos} lastRot={lastRot} />
       ) : (
-        <Car key={vehicleFolder} folder={vehicleFolder} lastPos={lastPos} lastRot={lastRot} />
+        <Car 
+          key={vehicleFolder} 
+          folder={vehicleFolder} 
+          lastPos={lastPos} 
+          lastRot={lastRot}
+        />
       )}
       <Ground />
       <MapObject filename="house.glb" position={[10, 0, -20]} scale={1} args={[5, 10, 5]} />
@@ -314,115 +682,458 @@ export default function App() {
   const [vehicleFolder, setVehicleFolder] = useState('default');
   const [showMenu, setShowMenu] = useState(false);
   const [showShop, setShowShop] = useState(false);
-  const [gold, setGold] = useState(5000);
+  
+  // Hệ thống vàng và xe đã mở khóa
+  const [gold, setGold] = useState(5000); // Tặng 5000 vàng khởi đầu
   const [unlockedVehicles, setUnlockedVehicles] = useState(['default']);
-  const [userName, setUserName] = useState('');
-  const [userAvatar, setUserAvatar] = useState(null);
-  const [showProfileSetup, setShowProfileSetup] = useState(true);
-
-  const shopItems = [
-    { id: 'default', name: 'Xe Đua Cơ Bản', price: 0, folder: 'default' },
-    { id: 'police', name: 'Xe Cảnh Sát', price: 500, folder: 'police' },
-    { id: 'helicopter', name: 'Trực Thăng Vũ Trụ', price: 1500, folder: 'helicopter' },
-    { id: 'ship', name: 'Tàu Chiến Domixi', price: 1000, folder: 'ship' },
-  ];
+  
+  // Hệ thống hồ sơ người chơi
+  const [userName, setUserName] = useState('Người Chơi 1');
+  const [userAvatar, setUserAvatar] = useState('👤');
+  const [showProfile, setShowProfile] = useState(true); // Hiện ngay khi vào game
 
   const handleAvatarUpload = (e) => {
     const file = e.target.files[0];
-    if (file && file.size <= 2 * 1024 * 1024) {
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert('Ảnh quá lớn! Vui lòng chọn ảnh dưới 2MB.');
+        return;
+      }
       const reader = new FileReader();
-      reader.onloadend = () => setUserAvatar(reader.result);
+      reader.onloadend = () => {
+        setUserAvatar(reader.result);
+      };
       reader.readAsDataURL(file);
     }
   };
 
+  const avatars = ['👤', '🏎️', '🚓', '🚁', '🚢', '🚀', '🐱', '🐶', '🔥', '⚡'];
+
+  const vehiclePrices = {
+    alternative: 500,
+    helicopter: 1500,
+    ship: 1000
+  };
+
+  const buyVehicle = (type) => {
+    const price = vehiclePrices[type];
+    if (gold >= price) {
+      setGold(prev => prev - price);
+      setUnlockedVehicles(prev => [...prev, type]);
+      alert(`Chúc mừng! Bạn đã mở khóa ${type === 'helicopter' ? 'Máy Bay' : type === 'ship' ? 'Tàu Thủy' : 'Xe Cảnh Sát'}!`);
+    } else {
+      alert('Bạn không đủ vàng!');
+    }
+  };
+
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
-      {showProfileSetup && (
-        <div className="setup-overlay">
-          <div className="setup-card">
-            <h2>THIẾT LẬP HỒ SƠ</h2>
-            <div className="avatar-section">
-              <div className="avatar-preview">{userAvatar ? <img src={userAvatar} alt="Avt" /> : '👤'}</div>
-              <label className="upload-label"><input type="file" onChange={handleAvatarUpload} />📸 TẢI ẢNH</label>
-            </div>
-            <input className="name-input" placeholder="Tên của bạn..." value={userName} onChange={e => setUserName(e.target.value)} />
-            <button className="start-btn" onClick={() => userName && setShowProfileSetup(false)}>BẮT ĐẦU ĐUA 🏁</button>
+    <div style={{ width: '100vw', height: '100vh', background: '#FF7A2F', margin: 0, padding: 0, overflow: 'hidden', position: 'relative', fontFamily: 'Arial, sans-serif' }}>
+      <style>{`
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { overflow:hidden; }
+        
+        .top-ui {
+          position: absolute;
+          top: 20px;
+          left: 20px;
+          display: flex;
+          align-items: center;
+          gap: 15px;
+          z-index: 100;
+        }
+
+        .user-profile-hud {
+          background: rgba(0, 0, 0, 0.7);
+          padding: 8px 20px 8px 8px;
+          border-radius: 50px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          cursor: pointer;
+          transition: all 0.3s;
+          backdrop-filter: blur(10px);
+        }
+        .user-profile-hud:hover { background: rgba(0, 0, 0, 0.8); transform: scale(1.02); }
+        
+        .hud-avatar {
+          width: 42px;
+          height: 42px;
+          background: #333;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 24px;
+          border: 2px solid #FF7A2F;
+          overflow: hidden;
+        }
+        .hud-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+        .hud-info { display: flex; flex-direction: column; }
+        .hud-name { color: white; font-weight: bold; font-size: 14px; }
+        .hud-gold { color: #FFD700; font-size: 12px; font-weight: bold; }
+
+        .menu-button, .shop-button {
+          padding: 12px 24px;
+          background: rgba(255, 255, 255, 0.15);
+          backdrop-filter: blur(10px);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          color: white;
+          border-radius: 12px;
+          cursor: pointer;
+          font-weight: bold;
+          transition: all 0.3s;
+        }
+
+        .menu-button:hover, .shop-button:hover {
+          background: rgba(255, 255, 255, 0.3);
+          transform: translateY(-2px);
+        }
+
+        .shop-button { background: rgba(255, 122, 47, 0.5); border-color: #FF7A2F; }
+
+        .overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.85);
+          display: none;
+          justify-content: center;
+          align-items: center;
+          z-index: 1000;
+          backdrop-filter: blur(8px);
+        }
+        
+        .overlay.active { display: flex; }
+        
+        .menu-card {
+          background: #111;
+          padding: 40px;
+          border-radius: 32px;
+          text-align: center;
+          max-width: 600px;
+          width: 95%;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+
+        .menu-card h2 { color: white; margin-bottom: 25px; font-size: 28px; text-transform: uppercase; }
+        
+        .profile-edit-input {
+          width: 100%;
+          padding: 15px;
+          background: #222;
+          border: 2px solid #333;
+          border-radius: 12px;
+          color: white;
+          font-size: 18px;
+          margin-bottom: 10px;
+          text-align: center;
+        }
+        .profile-edit-input:focus { border-color: #FF7A2F; outline: none; }
+
+        .avatar-preview-large {
+          width: 120px;
+          height: 120px;
+          background: #222;
+          border-radius: 50%;
+          margin: 0 auto 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 60px;
+          border: 4px solid #FF7A2F;
+          overflow: hidden;
+          cursor: pointer;
+          position: relative;
+          transition: transform 0.3s;
+        }
+        .avatar-preview-large:hover { transform: scale(1.05); }
+        .avatar-preview-large img { width: 100%; height: 100%; object-fit: cover; }
+        
+        .change-photo-btn {
+          background: #FF7A2F;
+          color: white;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 20px;
+          font-size: 12px;
+          font-weight: bold;
+          cursor: pointer;
+          margin-bottom: 20px;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+        }
+
+        .avatar-selector {
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 10px;
+          margin-bottom: 20px;
+          padding: 10px;
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 16px;
+        }
+        .avatar-item {
+          font-size: 32px;
+          padding: 10px;
+          background: #222;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: 0.2s;
+          border: 2px solid transparent;
+        }
+        .avatar-item:hover { transform: scale(1.1); background: #333; }
+        .avatar-item.selected { border-color: #FF7A2F; background: #332211; }
+
+        .upload-hint { color: #888; font-size: 13px; margin-bottom: 15px; }
+
+        .vehicle-options {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 15px;
+          margin-bottom: 30px;
+        }
+        
+        .vehicle-option {
+          background: #222;
+          padding: 20px;
+          border-radius: 24px;
+          cursor: pointer;
+          transition: all 0.3s;
+          border: 2px solid transparent;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+        .vehicle-option:hover { background: #2a2a2a; transform: translateY(-5px); }
+        .vehicle-option.selected { border-color: #FF7A2F; background: #332211; }
+        
+        .vehicle-icon { font-size: 40px; margin-bottom: 10px; }
+        .vehicle-option h3 { color: white; font-size: 14px; margin: 0; }
+        .price-tag { color: #FFD700; font-weight: bold; margin-top: 10px; font-size: 14px; }
+
+        .buy-btn, .save-btn {
+          margin-top: 15px;
+          padding: 14px 25px;
+          background: #FF7A2F;
+          border: none;
+          color: white;
+          border-radius: 16px;
+          cursor: pointer;
+          font-weight: bold;
+          width: 100%;
+          font-size: 16px;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+        }
+
+        .close-btn {
+          padding: 12px 40px;
+          background: #333;
+          border: none;
+          color: white;
+          border-radius: 12px;
+          cursor: pointer;
+          font-weight: bold;
+        }
+      `}</style>
+
+      {/* Top HUD */}
+      <div className="top-ui">
+        <div className="user-profile-hud" onClick={() => setShowProfile(true)}>
+          <div className="hud-avatar">
+            {userAvatar.length > 5 ? <img src={userAvatar} alt="avatar" /> : userAvatar}
+          </div>
+          <div className="hud-info">
+            <span className="hud-name">{userName}</span>
+            <span className="hud-gold">💰 {gold.toLocaleString()}</span>
           </div>
         </div>
-      )}
+        <button className="menu-button" onClick={() => setShowMenu(true)}>Ga-ra</button>
+        <button className="shop-button" onClick={() => setShowShop(true)}>Shop 🛒</button>
+      </div>
 
-      <div className="hud">
-        <div className="user-info">
-          <div className="hud-avatar">{userAvatar ? <img src={userAvatar} alt="Avt" /> : '👤'}</div>
-          <div className="hud-text"><span>{userName || 'Người Chơi'}</span><span>💰 {gold}</span></div>
-        </div>
-        <div className="hud-buttons">
-          <button className="hud-btn" onClick={() => setShowShop(true)}>🛒 CỬA HÀNG</button>
-          <button className="hud-btn" onClick={() => setShowMenu(true)}>🏎️ GA-RA</button>
+      {/* Profile Edit Overlay */}
+      <div className={`overlay ${showProfile ? 'active' : ''}`}>
+        <div className="menu-card">
+          <h2>Thiết Lập Hồ Sơ</h2>
+          
+          <div className="avatar-preview-large" onClick={() => document.getElementById('avatar-input').click()}>
+            {userAvatar.length > 5 ? <img src={userAvatar} alt="avatar" /> : userAvatar}
+          </div>
+          <button className="change-photo-btn" onClick={() => document.getElementById('avatar-input').click()}>
+            📸 TẢI ẢNH TỪ MÁY TÍNH
+          </button>
+          
+          <input 
+            id="avatar-input"
+            type="file" 
+            accept="image/*" 
+            style={{display: 'none'}} 
+            onChange={handleAvatarUpload}
+          />
+          <p className="upload-hint">Hoặc chọn một biểu tượng sẵn có:</p>
+
+          <div className="avatar-selector">
+            {avatars.map(a => (
+              <div 
+                key={a} 
+                className={`avatar-item ${userAvatar === a ? 'selected' : ''}`}
+                onClick={() => setUserAvatar(a)}
+              >
+                {a}
+              </div>
+            ))}
+          </div>
+
+          <input 
+            className="profile-edit-input"
+            value={userName}
+            onChange={(e) => setUserName(e.target.value)}
+            placeholder="Nhập tên của bạn..."
+            maxLength={20}
+          />
+          
+          <button className="save-btn" onClick={() => setShowProfile(false)}>BẮT ĐẦU TRÒ CHƠI</button>
         </div>
       </div>
 
-      {showShop && (
-        <div className="menu-overlay">
-          <div className="menu-content">
-            <h2>CỬA HÀNG</h2>
-            <div className="items-grid">
-              {shopItems.map(item => (
-                <div key={item.id} className="shop-item">
-                  <h3>{item.name}</h3>
-                  <p>💰 {item.price}</p>
-                  <button onClick={() => {
-                    if (gold >= item.price && !unlockedVehicles.includes(item.folder)) {
-                      setGold(gold - item.price);
-                      setUnlockedVehicles([...unlockedVehicles, item.folder]);
-                    }
-                  }}>{unlockedVehicles.includes(item.folder) ? 'ĐÃ CÓ' : 'MUA'}</button>
-                </div>
-              ))}
+      {/* Ga-ra Overlay */}
+      <div className={`overlay ${showMenu ? 'active' : ''}`}>
+        <div className="menu-card">
+          <h2>Xe Đã Sở Hữu</h2>
+          <div className="vehicle-options">
+            <div 
+              className={`vehicle-option ${vehicleFolder === 'default' ? 'selected' : ''}`}
+              onClick={() => { setVehicleFolder('default'); setShowMenu(false); }}
+            >
+              <span className="vehicle-icon">🏎️</span>
+              <h3>Xe Mặc Định</h3>
             </div>
-            <button onClick={() => setShowShop(false)}>ĐÓNG</button>
+            
+            {unlockedVehicles.includes('alternative') && (
+              <div 
+                className={`vehicle-option ${vehicleFolder === 'alternative' ? 'selected' : ''}`}
+                onClick={() => { setVehicleFolder('alternative'); setShowMenu(false); }}
+              >
+                <span className="vehicle-icon">🚓</span>
+                <h3>Xe Cảnh Sát</h3>
+              </div>
+            )}
+
+            {unlockedVehicles.includes('helicopter') && (
+              <div 
+                className={`vehicle-option ${vehicleFolder === 'helicopter' ? 'selected' : ''}`}
+                onClick={() => { setVehicleFolder('helicopter'); setShowMenu(false); }}
+              >
+                <span className="vehicle-icon">🚁</span>
+                <h3>Máy Bay</h3>
+              </div>
+            )}
+
+            {unlockedVehicles.includes('ship') && (
+              <div 
+                className={`vehicle-option ${vehicleFolder === 'ship' ? 'selected' : ''}`}
+                onClick={() => { setVehicleFolder('ship'); setShowMenu(false); }}
+              >
+                <span className="vehicle-icon">🚢</span>
+                <h3>Tàu Thủy</h3>
+              </div>
+            )}
           </div>
+          <button className="close-btn" onClick={() => setShowMenu(false)}>ĐÓNG</button>
+        </div>
+      </div>
+
+      {/* Shop Overlay */}
+      <div className={`overlay ${showShop ? 'active' : ''}`}>
+        <div className="menu-card">
+          <h2>Cửa Hàng Siêu Xe</h2>
+          <div className="vehicle-options">
+            <div className="vehicle-option">
+              <span className="vehicle-icon">🚓</span>
+              <h3>Xe Cảnh Sát</h3>
+              <span className="price-tag">💰 500</span>
+              {!unlockedVehicles.includes('alternative') ? (
+                <button className="buy-btn" onClick={() => buyVehicle('alternative')}>MUA</button>
+              ) : (
+                <span style={{color: '#4caf50', marginTop: '15px', fontWeight: 'bold'}}>SỞ HỮU</span>
+              )}
+            </div>
+
+            <div className="vehicle-option">
+              <span className="vehicle-icon">🚁</span>
+              <h3>Máy Bay</h3>
+              <span className="price-tag">💰 1500</span>
+              {!unlockedVehicles.includes('helicopter') ? (
+                <button className="buy-btn" onClick={() => buyVehicle('helicopter')}>MUA</button>
+              ) : (
+                <span style={{color: '#4caf50', marginTop: '15px', fontWeight: 'bold'}}>SỞ HỮU</span>
+              )}
+            </div>
+
+            <div className="vehicle-option">
+              <span className="vehicle-icon">🚢</span>
+              <h3>Tàu Thủy</h3>
+              <span className="price-tag">💰 1000</span>
+              {!unlockedVehicles.includes('ship') ? (
+                <button className="buy-btn" onClick={() => buyVehicle('ship')}>MUA</button>
+              ) : (
+                <span style={{color: '#4caf50', marginTop: '15px', fontWeight: 'bold'}}>SỞ HỮU</span>
+              )}
+            </div>
+          </div>
+          <button className="close-btn" onClick={() => setShowShop(false)}>ĐÓNG</button>
+        </div>
+      </div>
+
+      {/* Chú thích điều khiển máy bay */}
+      {vehicleFolder === 'helicopter' && (
+        <div className="heli-controls">
+          <h3>🚁 ĐIỀU KHIỂN</h3>
+          <p><b>W / S:</b> Tiến / Lùi</p>
+          <p><b>Q / E:</b> Xoay thân (Yaw)</p>
+          <p><b>Space:</b> Bay lên & Phanh</p>
+          <p><b>Shift:</b> Bay xuống</p>
         </div>
       )}
-
-      {showMenu && (
-        <div className="menu-overlay">
-          <div className="menu-content">
-            <h2>GA-RA</h2>
-            {unlockedVehicles.map(v => (
-              <button key={v} onClick={() => { setVehicleFolder(v); setShowMenu(false); }}>{v}</button>
-            ))}
-            <button onClick={() => setShowMenu(false)}>ĐÓNG</button>
-          </div>
-        </div>
-      )}
-
-      <Canvas shadows camera={{ position: [0, 5, 10], fov: 50 }}>
-        <Sky sunPosition={[100, 20, 100]} />
-        <Environment preset="park" />
-        <ContactShadows resolution={1024} scale={20} blur={2} opacity={0.5} far={10} />
-        <React.Suspense fallback={<Html center>🏗️ ĐANG NẠP...</Html>}>
-          <Game vehicleFolder={vehicleFolder} />
-        </React.Suspense>
-        <Preload all />
-      </Canvas>
 
       <style>{`
-        .setup-overlay, .menu-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 2000; color: white; }
-        .setup-card, .menu-content { background: #161b22; padding: 30px; border-radius: 20px; text-align: center; border: 1px solid #30363d; }
-        .avatar-preview { width: 100px; height: 100px; background: #0d1117; border-radius: 50%; margin: 10px auto; overflow: hidden; display: flex; justify-content: center; align-items: center; border: 2px solid #FF7A2F; }
-        .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
-        .name-input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: white; }
-        .start-btn { width: 100%; padding: 12px; background: #FF7A2F; border: none; border-radius: 10px; color: white; font-weight: bold; cursor: pointer; }
-        .hud { position: absolute; top: 20px; left: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
-        .user-info { background: rgba(0,0,0,0.7); padding: 10px; border-radius: 50px; display: flex; align-items: center; gap: 10px; color: white; border: 1px solid #FF7A2F; }
-        .hud-avatar { width: 40px; height: 40px; background: #000; border-radius: 50%; overflow: hidden; }
-        .hud-avatar img { width: 100%; height: 100%; object-fit: cover; }
-        .hud-btn { padding: 8px 15px; border-radius: 10px; border: none; background: #FF7A2F; color: white; font-weight: bold; cursor: pointer; }
-        .items-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; }
-        .shop-item { background: #0d1117; padding: 15px; border-radius: 12px; border: 1px solid #30363d; }
+        .heli-controls {
+          position: absolute;
+          bottom: 20px;
+          left: 20px;
+          background: rgba(0, 0, 0, 0.7);
+          color: white;
+          padding: 15px;
+          border-radius: 12px;
+          font-family: sans-serif;
+          pointer-events: none;
+          z-index: 100;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(5px);
+        }
+        .heli-controls h3 { margin: 0 0 10px 0; font-size: 14px; color: #FF7A2F; }
+        .heli-controls p { margin: 5px 0; font-size: 12px; }
+        .heli-controls b { color: #5bc0de; }
       `}</style>
+
+      <Canvas camera={{ position: [0, 5, 10], fov: 60 }} style={{ background: '#f0905a' }}>
+        {/* Fog để nền đất và bầu trời hòa vào nhau kiểu G10 */}
+        <fog attach="fog" args={['#FF7A2F', 40, 200]} />
+        
+        {/* Ánh sáng ấm mềm — kiểu G10 */}
+        <ambientLight intensity={1.2} color="#fff0e0" />
+        <directionalLight position={[10, 20, 10]} intensity={1.5} color="#ffe0c0" />
+        <directionalLight position={[-10, 10, -10]} intensity={0.5} color="#ffcc88" />
+        
+        <Game vehicleFolder={vehicleFolder} setVehicleFolder={setVehicleFolder} />
+      </Canvas>
     </div>
   );
 }
